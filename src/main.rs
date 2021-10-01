@@ -22,7 +22,7 @@ use rtic::app;
 use rtt_target::{rprintln, rtt_init_print};
 use stm32f4xx_hal::gpio::{gpioa, gpiob, gpioc, AlternateOD, Input, Output, PullUp, PushPull, AF4};
 use stm32f4xx_hal::rtc::Rtc;
-use stm32f4xx_hal::timer::{Event, Timer};
+use stm32f4xx_hal::timer::{CountDownTimer, Event, Timer};
 use time_display::{display_error, show_rtc_time};
 
 type SegmentDisplay =
@@ -39,9 +39,9 @@ const APP: () = {
     struct Resources {
         segment_display: SegmentDisplay,
         //dcf_pin: gpioa::PA<Input<Floating>>,
-        dcf_pin: gpioa::PA<Input<PullUp>>,
-        debug_pin: gpioc::PC<Output<PushPull>>,
-        timer: Timer<pac::TIM2>,
+        dcf_pin: gpioa::PAn<Input<PullUp>>,
+        debug_pin: gpioc::PCn<Output<PushPull>>,
+        timer: CountDownTimer<pac::TIM2>,
         cycles_computer: CyclesComputer,
         val: u16,
         decoder: DCF77Decoder,
@@ -64,8 +64,8 @@ const APP: () = {
         let mut pwr = device.PWR;
 
         let gpiob = device.GPIOB.split();
-        let scl = gpiob.pb6.into_alternate_af4().set_open_drain();
-        let sda = gpiob.pb7.into_alternate_af4().set_open_drain();
+        let scl = gpiob.pb6.into_alternate().set_open_drain();
+        let sda = gpiob.pb7.into_alternate().set_open_drain();
         let i2c = I2c::new(device.I2C1, (scl, sda), 400.khz(), clocks);
         let mut ht16k33 = HT16K33::new(i2c, DISP_I2C_ADDR);
         ht16k33.initialize().expect("Failed to initialize ht16k33");
@@ -80,17 +80,17 @@ const APP: () = {
             .write_display_buffer()
             .expect("Could not write 7-segment display");
         let gpioa = device.GPIOA.split();
-        let pin = gpioa.pa6.into_pull_up_input().downgrade();
+        let pin = gpioa.pa6.into_pull_up_input().erase_number();
 
         // Use this pin for debugging decoded signal state with oscilloscope
         let gpioc = device.GPIOC.split();
-        let output_pin = gpioc.pc6.into_push_pull_output().downgrade();
+        let output_pin = gpioc.pc6.into_push_pull_output().erase_number();
         // let pin = gpioa.pa6.into_floating_input().downgrade();
         //pa6.make_interrupt_source(&mut syscfg);
         //pa6.trigger_on_edge(&mut exti, Edge::RISING_FALLING);
         //pa6.enable_interrupt(&mut exti);
 
-        let mut timer = Timer::tim2(device.TIM2, 100.hz(), clocks);
+        let mut timer = Timer::new(device.TIM2, &clocks).start_count_down(100.hz());
         timer.listen(Event::TimeOut);
         let rtc = Rtc::new(device.RTC, 255, 127, false, &mut pwr);
         rprintln!("Init successful");
@@ -118,7 +118,7 @@ const APP: () = {
            debug_pin, segment_display, rtc, synchronized])]
     fn tim2(cx: tim2::Context) {
         cx.resources.timer.clear_interrupt(Event::TimeOut);
-        let pin_high = cx.resources.dcf_pin.is_high().unwrap();
+        let pin_high = cx.resources.dcf_pin.is_high();
         let decoder = cx.resources.decoder;
         let debug_pin = cx.resources.debug_pin;
         decoder.read_bit(pin_high);
