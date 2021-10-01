@@ -38,7 +38,6 @@ const DISP_I2C_ADDR: u8 = 0x70;
 const APP: () = {
     struct Resources {
         segment_display: SegmentDisplay,
-        //dcf_pin: gpioa::PA<Input<Floating>>,
         dcf_pin: gpioa::PAn<Input<PullUp>>,
         debug_pin: gpioc::PCn<Output<PushPull>>,
         timer: CountDownTimer<pac::TIM2>,
