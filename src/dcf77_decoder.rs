@@ -1,5 +1,15 @@
+use crate::cycles_computer::CyclesComputer;
+use crate::second_sync::SecondSync;
+use crate::stm32f4xx_hal::gpio::{gpioc, Edge, Output, PushPull};
+use core::iter::IntoIterator;
 use core::num::Wrapping;
+use rtic::cyccnt::{Instant, U32Ext};
 use rtt_target::rprintln;
+
+#[derive(Debug)]
+pub enum DecoderError {
+    WrongTransition,
+}
 
 pub struct SignalSmoother<const X: usize> {
     buf: [bool; X],
@@ -24,83 +34,51 @@ impl<const X: usize> SignalSmoother<X> {
 }
 
 pub struct DCF77Decoder {
-    current_count: Wrapping<u64>,
-    current_level: bool,
-    last_transition: Wrapping<u64>,
-    current_pause: u64,
-    smoother: SignalSmoother<7>,
-    start_detected: bool,
-    current_bits: u64,
-    last_bits: Option<u64>,
-    bit_pos: usize,
+    last_high_to_low: Option<Instant>,
+    last_low_to_high: Option<Instant>,
+    cycles_computer: CyclesComputer,
+    second_sync: SecondSync,
 }
 
 impl DCF77Decoder {
-    pub fn new() -> Self {
+    pub fn new(cycles_computer: CyclesComputer) -> Self {
         Self {
-            current_count: Wrapping(0),
-            current_level: false,
-            last_transition: Wrapping(0),
-            current_pause: 0,
-            smoother: SignalSmoother::new(),
-            start_detected: false,
-            current_bits: 0,
-            last_bits: None,
-            bit_pos: 0,
+            last_high_to_low: None,
+            last_low_to_high: None,
+            cycles_computer,
+            second_sync: SecondSync::new(),
         }
     }
 
-    pub fn current_level(&self) -> bool {
-        self.current_level
-    }
-
-    pub fn reset_last_bits(&mut self) {
-        self.last_bits.take();
-    }
-
-    pub fn last_bits(&self) -> Option<u64> {
-        self.last_bits
-    }
-
-    pub fn read_bit(&mut self, level: bool) {
-        let level = self.smoother.add_signal(level);
-        if level != self.current_level {
-            if self.current_pause > 0 {
-                if self.current_level == true && self.current_pause > 150 {
-                    rprintln!("Minute mark {}", self.current_pause);
-                    if self.start_detected {
-                        self.last_bits.replace(self.current_bits);
-                        rprintln!("Data: {:060b}", self.current_bits);
-                    } else {
-                        self.start_detected = true;
-                    }
-                    self.bit_pos = 0;
-                    self.current_bits = 0;
-                } else if self.start_detected && self.current_level == false {
-                    if self.current_pause >= 15 {
-                        self.current_bits |= 1 << self.bit_pos
-                    } else {
-                        self.current_bits &= !(1 << self.bit_pos)
-                    }
-                    if self.bit_pos == 59 {
-                        self.bit_pos = 0;
-                        self.last_bits.replace(self.current_bits);
-                        rprintln!("Data: {:060b}", self.current_bits);
-                        self.current_bits = 0;
-                        self.start_detected = false
-                    } else {
-                        self.bit_pos += 1;
-                    }
-                }
+    pub fn register_transition(
+        &mut self,
+        low_to_high: bool,
+        now: Instant,
+        debug_pin: &mut gpioc::PCn<Output<PushPull>>,
+    ) -> Result<(), DecoderError> {
+        let now = Instant::now();
+        if low_to_high {
+            debug_pin.set_high();
+            self.last_low_to_high.replace(now);
+            match self
+                .second_sync
+                .register_transition(Edge::Rising, now, self.cycles_computer)
+            {
+                Ok(_) => (),
+                Err(_e) => return Err(DecoderError::WrongTransition),
             }
-            self.current_pause = 0;
-            self.current_level = level;
-            self.last_transition = self.current_count;
         } else {
-            let diff = self.current_count - self.last_transition;
-            let Wrapping(d) = diff;
-            self.current_pause = d;
+            debug_pin.set_low();
+            self.last_high_to_low.replace(now);
+            match self
+                .second_sync
+                .register_transition(Edge::Falling, now, self.cycles_computer)
+            {
+                Ok(_) => (),
+                Err(_e) => return Err(DecoderError::WrongTransition),
+            }
         }
-        self.current_count += Wrapping(1);
+
+        Ok(())
     }
 }
