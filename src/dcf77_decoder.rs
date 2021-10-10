@@ -36,7 +36,6 @@ impl<const X: usize> SignalSmoother<X> {
 pub struct DCF77Decoder {
     last_high_to_low: Option<Instant>,
     last_low_to_high: Option<Instant>,
-    cycles_computer: CyclesComputer,
     second_sync: SecondSync,
 }
 
@@ -45,8 +44,7 @@ impl DCF77Decoder {
         Self {
             last_high_to_low: None,
             last_low_to_high: None,
-            cycles_computer,
-            second_sync: SecondSync::new(),
+            second_sync: SecondSync::new(cycles_computer),
         }
     }
 
@@ -60,20 +58,14 @@ impl DCF77Decoder {
         if low_to_high {
             debug_pin.set_high();
             self.last_low_to_high.replace(now);
-            match self
-                .second_sync
-                .register_transition(Edge::Rising, now, self.cycles_computer)
-            {
+            match self.second_sync.register_transition(Edge::Rising, now) {
                 Ok(_) => (),
                 Err(_e) => return Err(DecoderError::WrongTransition),
             }
         } else {
             debug_pin.set_low();
             self.last_high_to_low.replace(now);
-            match self
-                .second_sync
-                .register_transition(Edge::Falling, now, self.cycles_computer)
-            {
+            match self.second_sync.register_transition(Edge::Falling, now) {
                 Ok(_) => (),
                 Err(_e) => return Err(DecoderError::WrongTransition),
             }

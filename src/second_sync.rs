@@ -28,15 +28,17 @@ pub struct SecondSync {
     timestamps_edge_up: [u32; 300],
     edge_down_idx: usize,
     edge_up_idx: usize,
+    cycles_computer: CyclesComputer,
 }
 
 impl SecondSync {
-    pub fn new() -> Self {
+    pub fn new(cycles_computer: CyclesComputer) -> Self {
         SecondSync {
             timestamps_edge_down: [0; 300],
             timestamps_edge_up: [0; 300],
             edge_down_idx: 0,
             edge_up_idx: 0,
+            cycles_computer,
         }
     }
 
@@ -44,16 +46,20 @@ impl SecondSync {
         &mut self,
         signal: Edge,
         now: Instant,
-        cycles_computer: CyclesComputer,
     ) -> Result<(), SecondSyncError> {
         match signal {
             Edge::Falling => {
-                self.timestamps_edge_down[self.edge_down_idx] = cycles_computer
-                    .from_cycles(now.duration_since(CYCCNT::zero()))
-                    .as_millis()
-                    as u32;
+                self.timestamps_edge_down[self.edge_down_idx] =
+                    self.cycles_computer
+                        .from_cycles(now.duration_since(CYCCNT::zero()))
+                        .as_millis() as u32;
             }
-            Edge::Rising => {}
+            Edge::Rising => {
+                self.timestamps_edge_up[self.edge_up_idx] = self
+                    .cycles_computer
+                    .from_cycles(now.duration_since(CYCCNT::zero()))
+                    .as_millis() as u32;
+            }
             _ => return Err(SecondSyncError::WrongTransition),
         }
         Ok(())
